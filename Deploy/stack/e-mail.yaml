@@ -1,17 +1,17 @@
 version: '3.8'
 
 # Stack de e-mail — MailHog-GM (fork "placebo do Gmail").
-# Substitui o antigo mailhog/mailhog:latest. A imagem vem do CD (GHCR) via a
-# variável de ambiente IMAGE; o default permite deploy manual.
+# Implantada pelo job `deploy` de .github/workflows/cd-email.yml, que define IMAGE
+# com a tag do commit. O default permite deploy manual.
 
 services:
-  mailcrab: # Mantemos o nome para não quebrar seu Nginx
+  mailcrab: # Mantemos o nome para não quebrar o Nginx
     image: ${IMAGE:-ghcr.io/hermessilva/mailhog-gm:latest}
     hostname: mail.pildra.com.br
     networks:
-      - tokenguard_public
+      - tootega_public
     environment:
-      # Persistência (maildir), igual ao que rodava antes.
+      # Persistência (maildir).
       - MH_STORAGE=maildir
       - MH_MAILDIR_PATH=/data
       # Hostname anunciado no EHLO/HELO e usado no cert TLS self-signed.
@@ -39,6 +39,11 @@ services:
         mode: ingress
     deploy:
       replicas: 1
+      # O container novo sobe antes de o antigo parar: uma falha ao baixar a imagem
+      # não derruba o SMTP.
+      update_config:
+        order: start-first
+        failure_action: rollback
       placement:
         constraints:
           - node.role == manager
@@ -46,6 +51,6 @@ services:
         condition: any
 
 networks:
-  tokenguard_public:
+  tootega_public:
     external: true
-    name: tokenguard_public
+    name: tootega_public
