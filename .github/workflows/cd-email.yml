@@ -1,10 +1,10 @@
 name: CI/Publish — MailHog-GM
 
 # Compila o fork MailHog-GM, roda os testes de integração (envio + leitura de
-# e-mail) e publica a imagem no GHCR (ghcr.io/<owner>/mailhog-gm).
-# O DEPLOY no Swarm é feito pelo repositório TokenGuard
-# (.github/workflows/cd-email.yml lá), que consome esta imagem e tem os secrets
-# de infra — evitando compartilhar secrets entre repositórios.
+# e-mail), publica a imagem no GHCR (ghcr.io/<owner>/mailhog-gm) e aciona o deploy.
+# O DEPLOY no Swarm é feito por Tootega/InfraVPS (.github/workflows/cd-email.yml
+# lá), que tem os secrets de infra. Aqui só é preciso o secret INFRA_DEPLOY_TOKEN,
+# um PAT com permissão de acionar workflows naquele repositório.
 
 on:
   push:
@@ -110,3 +110,29 @@ jobs:
             [ $RETRY_COUNT -lt $MAX_RETRIES ] && sleep 5
           done
           [ $RETRY_COUNT -ge $MAX_RETRIES ] && { echo "Push failed after $MAX_RETRIES attempts"; exit 1; } || true
+
+  # ============================================================
+  # Aciona o deploy da imagem publicada em Tootega/InfraVPS
+  # ============================================================
+  trigger-deploy:
+    name: Trigger Deploy (InfraVPS)
+    runs-on: ubuntu-latest
+    needs: [build-push]
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    steps:
+      - name: Dispatch cd-email.yml
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.INFRA_DEPLOY_TOKEN }}
+          VERSION: ${{ needs.build-push.outputs.version }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Secret INFRA_DEPLOY_TOKEN ausente: a imagem foi publicada, mas o deploy não foi acionado."
+            exit 1
+          fi
+          IMAGE_NAME=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="${{ env.REGISTRY }}/${IMAGE_NAME}:${VERSION}"
+          gh workflow run cd-email.yml --repo Tootega/InfraVPS --ref master -f image="$IMAGE"
+          echo "Deploy de $IMAGE acionado: https://github.com/Tootega/InfraVPS/actions/workflows/cd-email.yml" >> "$GITHUB_STEP_SUMMARY"
