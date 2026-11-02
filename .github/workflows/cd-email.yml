@@ -1,10 +1,9 @@
 name: CI/Publish — MailHog-GM
 
 # Compila o fork MailHog-GM, roda os testes de integração (envio + leitura de
-# e-mail), publica a imagem no GHCR (ghcr.io/<owner>/mailhog-gm) e aciona o deploy.
-# O DEPLOY no Swarm é feito por Tootega/InfraVPS (.github/workflows/cd-email.yml
-# lá), que tem os secrets de infra. Aqui só é preciso o secret INFRA_DEPLOY_TOKEN,
-# um PAT com permissão de acionar workflows naquele repositório.
+# e-mail), publica a imagem no GHCR (ghcr.io/<owner>/mailhog-gm) e faz o deploy
+# no Swarm via SSH. Secrets: STAGING_HOST, STAGING_USER, STAGING_SSH_KEY e
+# STAGING_SSH_PASSPHRASE.
 
 on:
   push:
@@ -112,27 +111,117 @@ jobs:
           [ $RETRY_COUNT -ge $MAX_RETRIES ] && { echo "Push failed after $MAX_RETRIES attempts"; exit 1; } || true
 
   # ============================================================
-  # Aciona o deploy da imagem publicada em Tootega/InfraVPS
+  # Deploy no Swarm via SSH
+  # Repositório público: os logs são públicos. Não imprimir aqui `docker service
+  # logs`, que contêm endereços de e-mail.
   # ============================================================
-  trigger-deploy:
-    name: Trigger Deploy (InfraVPS)
+  deploy:
+    name: Deploy E-mail (Swarm)
     runs-on: ubuntu-latest
     needs: [build-push]
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    concurrency: deploy-email
     permissions:
       contents: read
     steps:
-      - name: Dispatch cd-email.yml
-        shell: bash
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create target directory
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
+          script: mkdir -p /opt/tootega/stacks
+
+      - name: Copy e-mail stack to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
+          source: "Deploy/stack/e-mail.yaml"
+          target: "/opt/tootega/stacks/"
+          strip_components: 2
+
+      - name: Deploy MailHog-GM to Swarm
+        uses: appleboy/ssh-action@v1.0.3
         env:
-          GH_TOKEN: ${{ secrets.INFRA_DEPLOY_TOKEN }}
-          VERSION: ${{ needs.build-push.outputs.version }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::Secret INFRA_DEPLOY_TOKEN ausente: a imagem foi publicada, mas o deploy não foi acionado."
-            exit 1
-          fi
-          IMAGE_NAME=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE="${{ env.REGISTRY }}/${IMAGE_NAME}:${VERSION}"
-          gh workflow run cd-email.yml --repo Tootega/InfraVPS --ref master -f image="$IMAGE"
-          echo "Deploy de $IMAGE acionado: https://github.com/Tootega/InfraVPS/actions/workflows/cd-email.yml" >> "$GITHUB_STEP_SUMMARY"
+          DEPLOY_IMAGE: ${{ env.REGISTRY }}/hermessilva/mailhog-gm:${{ needs.build-push.outputs.version }}
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
+          envs: DEPLOY_IMAGE
+          script: |
+            set -e
+            TARGET_STACK="mailhog"
+            IMAGE="${DEPLOY_IMAGE}"
+            echo "Imagem: ${IMAGE}"
+
+            # Rede overlay compartilhada (reaproveitada)
+            docker network create --driver overlay tootega_public 2>/dev/null || true
+
+            # Credenciais isoladas: um login vencido em ~/.docker/config.json (ex.: um
+            # GITHUB_TOKEN de outro CD) pode ser recusado até em pacote público, e o
+            # Swarm reporta isso como "No such image". O pacote é público.
+            export DOCKER_CONFIG="$(mktemp -d)"
+            trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+
+            # Baixa antes de alterar o serviço: se falhar, nada muda no servidor.
+            PULL_OK=0
+            for i in 1 2 3 4 5; do
+              if docker pull "${IMAGE}"; then PULL_OK=1; break; fi
+              echo "Pull ${i}/5 falhou, aguardando 5s..."; sleep 5
+            done
+            if [ "$PULL_OK" != "1" ]; then
+              echo "ERRO: nao foi possivel baixar ${IMAGE}."
+              exit 1
+            fi
+
+            IMAGE="${IMAGE}" docker stack deploy \
+              -c /opt/tootega/stacks/e-mail.yaml \
+              --with-registry-auth \
+              "${TARGET_STACK}"
+
+            # Health check: exige um único container, com a imagem implantada, API no
+            # ar e filtro de domínio ativo. Só testar a API aprovaria o container antigo
+            # em uma atualização que falhou ou sofreu rollback.
+            echo "=== Health Check ==="
+            EXPECTED_ID=$(docker image inspect "${IMAGE}" --format '{{.Id}}')
+            RETRIES=12
+            COUNT=0
+            until [ $COUNT -ge $RETRIES ]; do
+              CID=$(docker ps -q -f name="${TARGET_STACK}_mailcrab" -f status=running 2>/dev/null)
+              if [ "$(echo "$CID" | wc -w)" = "1" ] \
+                && [ "$(docker inspect "$CID" --format '{{.Image}}')" = "$EXPECTED_ID" ] \
+                && docker exec "$CID" wget -q -O - http://127.0.0.1:8025/api/v2/messages >/dev/null 2>&1 \
+                && docker logs "$CID" 2>&1 | grep -q "Filtro de dom"; then
+                echo "MailHog-GM no ar com ${IMAGE} e filtro de domínio ativo."
+                break
+              fi
+              COUNT=$((COUNT + 1))
+              echo "Tentativa $COUNT/$RETRIES falhou, aguardando 10s..."
+              sleep 10
+            done
+
+            if [ $COUNT -ge $RETRIES ]; then
+              echo "ERRO: health check não passou após $RETRIES tentativas."
+              docker service ps "${TARGET_STACK}_mailcrab" --format '{{.CurrentState}} {{.Error}}' 2>/dev/null | head -5 || true
+              exit 1
+            fi
+
+      - name: Purge unused images on deploy host
+        if: always()
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
+          script: |
+            docker image prune -af >/dev/null 2>&1 || true

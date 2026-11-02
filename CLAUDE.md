@@ -67,7 +67,9 @@ docker run --rm -v "${PWD}:/go/src/github.com/mailhog/MailHog" \
 
 ## CI/CD
 
-Push em `master` → testes → imagem no GHCR → `trigger-deploy` aciona o `cd-email.yml` de `Tootega/InfraVPS` (secret `INFRA_DEPLOY_TOKEN`). A stack em uso é a `deploy/stacks/e-mail.yaml` do InfraVPS; a cópia em `Deploy/stack/` não é usada no deploy.
+Push em `master` → testes → imagem no GHCR → job `deploy` faz `docker stack deploy` via SSH com a stack `Deploy/stack/e-mail.yaml` (stack `mailhog`, serviço `mailcrab`, rede `tootega_public`). Secrets: `STAGING_HOST`, `STAGING_USER`, `STAGING_SSH_KEY`, `STAGING_SSH_PASSPHRASE`.
+
+O repositório é público e os logs do Actions também: não imprimir `docker service logs` no workflow, pois contêm endereços de e-mail.
 
 ## Regras de trabalho
 
