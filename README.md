@@ -74,7 +74,9 @@ O `Dockerfile` compila o MailHog-GM a partir do código-fonte local (GOPATH + `v
 
 #### Deploy (CI/CD)
 
-O workflow [`.github/workflows/cd-email.yml`](.github/workflows/cd-email.yml) roda os testes de integração como gate, publica a imagem no GHCR e faz `docker stack deploy` no Swarm — **substituindo a stack de e-mail anterior** (a antiga é removida). A stack de produção está em [`Deploy/stack/e-mail.yaml`](Deploy/stack/e-mail.yaml), expondo SMTP nas portas `25`/`2525` e submissão STARTTLS na `587`.
+O workflow [`.github/workflows/cd-email.yml`](.github/workflows/cd-email.yml) roda os testes de integração como gate, publica a imagem no GHCR e aciona o deploy no repositório `Tootega/InfraVPS`, que faz o `docker stack deploy` no Swarm com a tag do commit. A stack em uso é a `deploy/stacks/e-mail.yaml` daquele repositório, expondo SMTP nas portas `25`/`2525` e submissão STARTTLS na `587`.
+
+O acionamento exige o secret `INFRA_DEPLOY_TOKEN` neste repositório: um PAT com permissão de escrita em Actions no `Tootega/InfraVPS`. Sem ele, o job `Trigger Deploy` falha e a imagem publicada não é implantada.
 
 ### Créditos e licença
 

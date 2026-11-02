@@ -65,6 +65,10 @@ docker run --rm -v "${PWD}:/go/src/github.com/mailhog/MailHog" \
    -o ../vendor/github.com/mailhog/MailHog-UI/assets/assets.go assets/..."
 ```
 
+## CI/CD
+
+Push em `master` → testes → imagem no GHCR → `trigger-deploy` aciona o `cd-email.yml` de `Tootega/InfraVPS` (secret `INFRA_DEPLOY_TOKEN`). A stack em uso é a `deploy/stacks/e-mail.yaml` do InfraVPS; a cópia em `Deploy/stack/` não é usada no deploy.
+
 ## Regras de trabalho
 
 - Preservar compatibilidade com API/UI existentes do MailHog.

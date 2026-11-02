@@ -20,6 +20,8 @@ projeto adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 ### Changed
 - **Mudança de comportamento:** destinatários fora de `pildra.com.br` passam a ser
   recusados por padrão. Use `MH_SMTP_ALLOWED_DOMAINS=` (vazio) para aceitar todos.
+- **CI/CD:** publicar a imagem agora aciona o deploy em `Tootega/InfraVPS`. Antes,
+  a imagem nova só chegava ao servidor com um disparo manual naquele repositório.
 
 ## [1.0.0-gm] - 2026-07-04
 
