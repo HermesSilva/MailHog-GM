@@ -46,7 +46,8 @@ Alvo:
 
 - **Auth SMTP**: `session.go` anuncia `PLAIN LOGIN XOAUTH2`, oferece STARTTLS (cert self-signed auto em `config/tls.go`), valida credenciais em modo estrito (`-smtp-auth-file`) ou aceita qualquer (`-smtp-auth-allow-any`, padrão). XOAUTH2 adicionado em `smtp/protocol.go`. Listener SMTPS opcional (`-smtps-bind-addr`, `smtp.ListenTLS`).
 - **API mais novo primeiro**: `api.go:sortMessagesDesc` aplicado em v1 `messages`, v2 `messages` e `search`.
-- **Flags novas** (todas com env `MH_*`): `smtp-auth-allow-any`, `smtp-auth-file`, `smtp-require-tls`, `smtp-tls-cert`, `smtp-tls-key`, `smtps-bind-addr`.
+- **Flags novas** (todas com env `MH_*`): `smtp-auth-allow-any`, `smtp-auth-file`, `smtp-require-tls`, `smtp-tls-cert`, `smtp-tls-key`, `smtps-bind-addr`, `smtp-allowed-domains`.
+- **Filtro de domínio**: `session.go:validateRecipient` recusa (550) destinatários fora de `-smtp-allowed-domains` (padrão `pildra.com.br`; vazio desabilita) e `acceptMessage` descarta DATA sem destinatário aceito.
 - **Pendente**: compilar/testar com toolchain Go (não instalado neste ambiente).
 
 ## UI (GMail Placebo)

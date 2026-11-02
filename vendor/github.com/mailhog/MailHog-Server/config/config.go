@@ -14,6 +14,9 @@ import (
 	"github.com/mailhog/storage"
 )
 
+// defaultAllowedDomains é o domínio de destinatário aceito quando nada é configurado.
+const defaultAllowedDomains = "pildra.com.br"
+
 // DefaultConfig is the default config
 func DefaultConfig() *Config {
 	return &Config{
@@ -37,6 +40,8 @@ func DefaultConfig() *Config {
 		SMTPTLSCert:      "",
 		SMTPTLSKey:       "",
 		AuthCredentials:  make(map[string]string),
+
+		SMTPAllowedDomains: defaultAllowedDomains,
 	}
 }
 
@@ -84,6 +89,12 @@ type Config struct {
 	AuthCredentials map[string]string
 	// TLSConfig é montado em Configure() e usado por STARTTLS/SMTPS.
 	TLSConfig *tls.Config
+
+	// SMTPAllowedDomains lista, separados por vírgula, os domínios de
+	// destinatário aceitos. Vazio desabilita o filtro.
+	SMTPAllowedDomains string
+	// AllowedDomains é preenchido a partir de SMTPAllowedDomains em Configure().
+	AllowedDomains map[string]bool
 }
 
 // OutgoingSMTP is an outgoing SMTP server config
@@ -149,8 +160,55 @@ func Configure() *Config {
 
 	configureSMTPAuth()
 	configureSMTPTLS()
+	configureAllowedDomains()
 
 	return cfg
+}
+
+// configureAllowedDomains monta o filtro de domínios de destinatário.
+func configureAllowedDomains() {
+	cfg.AllowedDomains = ParseAllowedDomains(cfg.SMTPAllowedDomains)
+	if len(cfg.AllowedDomains) == 0 {
+		log.Println("[SMTP] Filtro de domínio desabilitado: qualquer destinatário é aceito")
+		return
+	}
+	log.Printf("[SMTP] Filtro de domínio ativo: aceitando apenas destinatários em %s", cfg.SMTPAllowedDomains)
+}
+
+// ParseAllowedDomains converte uma lista separada por vírgula em um conjunto de
+// domínios normalizados.
+func ParseAllowedDomains(raw string) map[string]bool {
+	domains := make(map[string]bool)
+	for _, domain := range strings.Split(raw, ",") {
+		if domain = normalizeDomain(domain); domain != "" {
+			domains[domain] = true
+		}
+	}
+	return domains
+}
+
+// normalizeDomain ignora espaços, caixa e o ponto final de FQDN.
+func normalizeDomain(domain string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+}
+
+// FiltersRecipients indica se o filtro de domínios de destinatário está ativo.
+func (c *Config) FiltersRecipients() bool {
+	return len(c.AllowedDomains) > 0
+}
+
+// RecipientAllowed indica se o destinatário pode ser aceito. O domínio é o que
+// vem após o último '@' e precisa coincidir exatamente: subdomínios só são
+// aceitos se forem listados.
+func (c *Config) RecipientAllowed(address string) bool {
+	if !c.FiltersRecipients() {
+		return true
+	}
+	at := strings.LastIndex(address, "@")
+	if at < 0 {
+		return false
+	}
+	return c.AllowedDomains[normalizeDomain(address[at+1:])]
 }
 
 // configureSMTPAuth carrega o arquivo de credenciais (modo estrito) quando
@@ -232,6 +290,8 @@ func RegisterFlags() {
 	flag.BoolVar(&cfg.SMTPRequireTLS, "smtp-require-tls", envconf.FromEnvP("MH_SMTP_REQUIRE_TLS", false).(bool), "Require STARTTLS before AUTH/MAIL, like Gmail")
 	flag.StringVar(&cfg.SMTPTLSCert, "smtp-tls-cert", envconf.FromEnvP("MH_SMTP_TLS_CERT", "").(string), "Path to PEM certificate for SMTP TLS (self-signed generated if empty)")
 	flag.StringVar(&cfg.SMTPTLSKey, "smtp-tls-key", envconf.FromEnvP("MH_SMTP_TLS_KEY", "").(string), "Path to PEM private key for SMTP TLS (self-signed generated if empty)")
+
+	flag.StringVar(&cfg.SMTPAllowedDomains, "smtp-allowed-domains", envconf.FromEnvP("MH_SMTP_ALLOWED_DOMAINS", defaultAllowedDomains).(string), "Comma-separated recipient domains to accept; other recipients are rejected. Empty disables the filter")
 
 	Jim.RegisterFlags()
 }

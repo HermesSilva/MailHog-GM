@@ -1,3 +1,4 @@
+using MailKit.Net.Smtp;
 using Xunit;
 
 namespace MailHogGM.Tests;
@@ -31,7 +32,7 @@ public sealed class EmailTests : IAsyncLifetime
     public async Task ConfirmacaoDeEmail_EhEnviadaERecebida()
     {
         var token = Guid.NewGuid().ToString("N");
-        var to = "novo.usuario@tootega.test";
+        var to = "novo.usuario@pildra.com.br";
         const string subject = "Confirm your email address";
         var body =
             "Bem-vindo! Confirme seu e-mail acessando o link abaixo:\n" +
@@ -51,7 +52,7 @@ public sealed class EmailTests : IAsyncLifetime
     public async Task ResetDeSenha_EnviaTokenComExpiracao()
     {
         var token = Guid.NewGuid().ToString("N");
-        var to = "usuario@tootega.test";
+        var to = "usuario@pildra.com.br";
         const string subject = "Reset your password";
         var body =
             "Recebemos um pedido de redefinição de senha.\n" +
@@ -74,14 +75,23 @@ public sealed class EmailTests : IAsyncLifetime
     {
         // Envia confirmação e, em seguida, o reset. O mais novo (reset) deve
         // vir primeiro na listagem da API.
-        await _sender.SendAsync("a@tootega.test", "Confirm your email address", "confirmacao");
+        await _sender.SendAsync("a@pildra.com.br", "Confirm your email address", "confirmacao");
         await Task.Delay(50); // garante Created distinto
-        await _sender.SendAsync("b@tootega.test", "Reset your password", "reset");
+        await _sender.SendAsync("b@pildra.com.br", "Reset your password", "reset");
 
         var messages = await _api.WaitForMessagesAsync(2, TimeSpan.FromSeconds(10));
 
         Assert.Equal("Reset your password", messages[0].Subject);
         Assert.Equal("Confirm your email address", messages[1].Subject);
         Assert.True(messages[0].Created >= messages[1].Created);
+    }
+
+    [Fact]
+    public async Task DestinatarioDeOutroDominio_EhRecusadoENaoApareceNaCaixa()
+    {
+        await Assert.ThrowsAsync<SmtpCommandException>(
+            () => _sender.SendAsync("alguem@gmail.com", "Fora do dominio", "recusado"));
+
+        Assert.Empty(await _api.ListAsync());
     }
 }

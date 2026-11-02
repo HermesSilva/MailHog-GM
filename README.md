@@ -40,6 +40,18 @@ Flags / variáveis de ambiente:
 
 > **Certificado self-signed:** clientes que validam a cadeia (ex.: `System.Net.Mail.SmtpClient` do .NET) rejeitam o cert gerado. Em teste, ou forneça um cert confiável via `-smtp-tls-cert`/`-smtp-tls-key`, ou desabilite a validação no cliente (ex.: `ServicePointManager.ServerCertificateValidationCallback = (s,c,ch,e) => true;`).
 
+#### Filtro de domínio de destinatário
+
+Por padrão, só são aceitas mensagens para destinatários (`RCPT TO`) de `pildra.com.br`. Os demais são recusados com `550` durante a sessão SMTP e nada é armazenado, portanto a mensagem não chega à API nem à UI. O domínio do remetente não é avaliado.
+
+| Flag | Env | Padrão | Descrição |
+|------|-----|--------|-----------|
+| `-smtp-allowed-domains` | `MH_SMTP_ALLOWED_DOMAINS` | `pildra.com.br` | Domínios aceitos, separados por vírgula. Vazio desabilita o filtro. |
+
+* A comparação ignora maiúsculas e exige o domínio exato: `sub.pildra.com.br` só é aceito se for listado.
+* Em uma mensagem com vários destinatários, apenas os de fora são recusados. A mensagem é armazenada para os aceitos e os cabeçalhos `To`/`Cc` originais são preservados.
+* O filtro vale para mensagens novas: as que já estão armazenadas não são removidas.
+
 #### API — mais novo primeiro
 
 Todos os endpoints de listagem retornam ordenados por `Created` decrescente (mais novo primeiro), em qualquer backend (`memory`/`mongodb`/`maildir`):

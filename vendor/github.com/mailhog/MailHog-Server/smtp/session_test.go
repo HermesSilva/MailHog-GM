@@ -2,11 +2,13 @@ package smtp
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 
+	"github.com/mailhog/MailHog-Server/config"
 	"github.com/mailhog/data"
 	"github.com/mailhog/storage"
 )
@@ -128,6 +130,120 @@ func TestValidateRecipient(t *testing.T) {
 
 		So(c.validateRecipient("OINK"), ShouldBeTrue)
 		So(c.validateRecipient("foo@bar.mailhog"), ShouldBeTrue)
+	})
+}
+
+// Os testes do filtro usam testing puro: o So do goconvey vendorizado entra em
+// pânico nas versões atuais do Go.
+func TestValidateRecipientDomainFilter(t *testing.T) {
+	c := &Session{remoteAddress: "1.1.1.1:11111", config: &config.Config{
+		AllowedDomains: config.ParseAllowedDomains(" Pildra.com.br , outro.test "),
+	}}
+
+	cases := map[string]bool{
+		"foo@pildra.com.br":           true,
+		"FOO@PILDRA.COM.BR":           true,
+		"foo@pildra.com.br.":          true,
+		"foo@outro.test":              true,
+		"foo@gmail.com":               false,
+		"foo@sub.pildra.com.br":       false,
+		"foo@pildra.com.br.evil.test": false,
+		"foo@notpildra.com.br":        false,
+		"foo@pildra.com.br@evil.test": false,
+		"pildra.com.br":               false,
+	}
+	for address, expected := range cases {
+		if got := c.validateRecipient(address); got != expected {
+			t.Errorf("validateRecipient(%q) = %v, esperado %v", address, got, expected)
+		}
+	}
+}
+
+func TestValidateRecipientFilterDisabled(t *testing.T) {
+	c := &Session{config: &config.Config{AllowedDomains: config.ParseAllowedDomains("")}}
+
+	if !c.validateRecipient("foo@gmail.com") {
+		t.Error("lista vazia deveria desabilitar o filtro")
+	}
+}
+
+// runSession executa uma sessão SMTP completa e devolve as respostas do servidor
+// e as mensagens armazenadas.
+func runSession(t *testing.T, script string) (string, []data.Message) {
+	t.Helper()
+
+	var replies []byte
+	frw := &fakeRw{
+		_read: func(p []byte) (int, error) {
+			n := copy(p, script)
+			script = script[n:]
+			return n, nil
+		},
+		_write: func(p []byte) (int, error) {
+			replies = append(replies, p...)
+			return len(p), nil
+		},
+	}
+	store := storage.CreateInMemory()
+	cfg := &config.Config{AllowedDomains: config.ParseAllowedDomains("pildra.com.br")}
+	Accept("1.1.1.1:11111", frw, store, make(chan *data.Message, 1), "localhost", nil, cfg)
+
+	messages, err := store.List(0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(replies), []data.Message(*messages)
+}
+
+func TestDomainFilterSession(t *testing.T) {
+	const hello = "EHLO localhost\r\nMAIL FROM:<app@gmail.com>\r\n"
+	const body = "DATA\r\nHi.\r\n.\r\nQUIT\r\n"
+
+	t.Run("destinatario permitido e armazenado, qualquer que seja o remetente", func(t *testing.T) {
+		replies, messages := runSession(t, hello+"RCPT TO:<foo@pildra.com.br>\r\n"+body)
+
+		if !strings.Contains(replies, "250 Ok: queued as") {
+			t.Errorf("mensagem deveria ser aceita: %q", replies)
+		}
+		if len(messages) != 1 {
+			t.Errorf("esperava 1 mensagem, obteve %d", len(messages))
+		}
+	})
+
+	t.Run("destinatario recusado responde 550 e DATA nao armazena", func(t *testing.T) {
+		replies, messages := runSession(t, hello+"RCPT TO:<foo@gmail.com>\r\n"+body)
+
+		if !strings.Contains(replies, "550 Invalid recipient foo@gmail.com") {
+			t.Errorf("esperava 550: %q", replies)
+		}
+		if strings.Contains(replies, "queued as") {
+			t.Errorf("mensagem nao deveria ser aceita: %q", replies)
+		}
+		if len(messages) != 0 {
+			t.Errorf("esperava 0 mensagens, obteve %d", len(messages))
+		}
+	})
+
+	t.Run("DATA sem RCPT nao armazena", func(t *testing.T) {
+		replies, messages := runSession(t, hello+body)
+
+		if strings.Contains(replies, "queued as") {
+			t.Errorf("mensagem nao deveria ser aceita: %q", replies)
+		}
+		if len(messages) != 0 {
+			t.Errorf("esperava 0 mensagens, obteve %d", len(messages))
+		}
+	})
+
+	t.Run("destinatarios mistos mantem apenas os permitidos", func(t *testing.T) {
+		_, messages := runSession(t, hello+"RCPT TO:<foo@gmail.com>\r\nRCPT TO:<bar@pildra.com.br>\r\n"+body)
+
+		if len(messages) != 1 {
+			t.Fatalf("esperava 1 mensagem, obteve %d", len(messages))
+		}
+		if to := messages[0].To; len(to) != 1 || to[0].Domain != "pildra.com.br" {
+			t.Errorf("destinatarios inesperados: %+v", to)
+		}
 	})
 }
 
