@@ -18,6 +18,8 @@ services:
       - MH_HOSTNAME=mail.pildra.com.br
       # Autenticação nível Gmail (placebo): aceita qualquer credencial.
       - MH_SMTP_AUTH_ALLOW_ANY=true
+      # Recusa (550) destinatários fora destes domínios.
+      - MH_SMTP_ALLOWED_DOMAINS=pildra.com.br
     volumes:
       - /mnt/data/mailcrab:/data
     ports:

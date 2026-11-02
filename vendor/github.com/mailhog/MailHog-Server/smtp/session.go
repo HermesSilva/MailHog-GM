@@ -23,6 +23,10 @@ import (
 // estrito (arquivo de auth configurado).
 var errInvalidAuth = errors.New("Authentication credentials invalid")
 
+// errNoAllowedRecipient é retornado quando chega DATA sem nenhum destinatário
+// aceito pelo filtro de domínios: o protocolo não impede DATA nesse estado.
+var errNoAllowedRecipient = errors.New("No allowed recipient")
+
 // Session represents a SMTP session using net.TCPConn
 type Session struct {
 	conn          io.ReadWriteCloser
@@ -202,6 +206,10 @@ func (c *Session) validateRecipient(to string) bool {
 			return false
 		}
 	}
+	if c.config != nil && !c.config.RecipientAllowed(to) {
+		c.logf("Rejecting recipient %q: domain not allowed", to)
+		return false
+	}
 	return true
 }
 
@@ -216,6 +224,11 @@ func (c *Session) validateSender(from string) bool {
 }
 
 func (c *Session) acceptMessage(msg *data.SMTPMessage) (id string, err error) {
+	if c.config != nil && c.config.FiltersRecipients() && len(msg.To) == 0 {
+		c.logf("Discarding message: no allowed recipient")
+		return "", errNoAllowedRecipient
+	}
+
 	m := msg.Parse(c.proto.Hostname)
 	c.logf("Storing message %s", m.ID)
 	id, err = c.storage.Store(m)

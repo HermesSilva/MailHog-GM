@@ -10,6 +10,17 @@ projeto adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 > MIT). Os direitos do software base pertencem aos autores originais; veja
 > `LICENSE.md`.
 
+## [Unreleased]
+
+### Added
+- **Filtro de domínio de destinatário**: `-smtp-allowed-domains`
+  (`MH_SMTP_ALLOWED_DOMAINS`, padrão `pildra.com.br`). Destinatários de outros
+  domínios são recusados com `550` e a mensagem não é armazenada.
+
+### Changed
+- **Mudança de comportamento:** destinatários fora de `pildra.com.br` passam a ser
+  recusados por padrão. Use `MH_SMTP_ALLOWED_DOMAINS=` (vazio) para aceitar todos.
+
 ## [1.0.0-gm] - 2026-07-04
 
 Primeira versão do fork, adaptando o MailHog para atuar como **substituto do
